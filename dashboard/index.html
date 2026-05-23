@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>US Inflation Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F7F8FA;
+  --white:#FFFFFF;
+  --border:#E4E7ED;
+  --text:#0F172A;
+  --sub:#64748B;
+  --faint:#F1F5F9;
+  --blue:#1D4ED8;
+  --blue-lt:#EFF6FF;
+  --green:#059669;
+  --green-lt:#ECFDF5;
+  --amber:#B45309;
+  --amber-lt:#FFFBEB;
+  --red:#DC2626;
+  --red-lt:#FEF2F2;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 4px 16px rgba(0,0,0,.04);
+}
+html,body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:15px;line-height:1.6}
+
+/* ── Header ── */
+header{
+  background:var(--white);border-bottom:1px solid var(--border);
+  padding:0 max(24px, calc(50% - 660px));
+  position:sticky;top:0;z-index:50;
+}
+.header-inner{
+  height:56px;display:flex;align-items:center;justify-content:space-between;
+}
+.header-brand{display:flex;align-items:center;gap:10px}
+.header-icon{
+  width:32px;height:32px;border-radius:8px;
+  background:var(--blue);display:flex;align-items:center;justify-content:center;
+  font-size:16px;
+}
+.header-title{font-size:.9rem;font-weight:700;color:var(--text);letter-spacing:-.01em}
+.header-meta{font-size:.72rem;color:var(--sub)}
+.live{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:500;color:var(--green)}
+.live-dot{width:6px;height:6px;background:var(--green);border-radius:50%;animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── Page wrapper ── */
+.page{padding:16px max(24px,calc(50% - 660px)) 60px;display:flex;flex-direction:column;gap:10px}
+
+/* ── Hero card ── */
+.hero{
+  background:var(--white);border:1px solid var(--border);border-radius:14px;
+  padding:24px 28px;box-shadow:var(--shadow);
+  display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:center;
+}
+.hero-left{}
+.hero-eyebrow{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--sub);margin-bottom:10px}
+.hero-number{font-size:4rem;font-weight:900;letter-spacing:-.06em;line-height:1}
+.hero-unit{font-size:1.4rem;font-weight:500;color:var(--sub);vertical-align:super;margin-left:3px}
+.hero-label{font-size:.82rem;color:var(--sub);margin-top:6px}
+.hero-badge{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:.75rem;font-weight:600;padding:4px 12px;border-radius:99px;margin-top:8px;
+}
+.badge-green{background:var(--green-lt);color:var(--green)}
+.badge-amber{background:var(--amber-lt);color:var(--amber)}
+.badge-red  {background:var(--red-lt);color:var(--red)}
+.hero-right{}
+.hero-explanation{
+  background:var(--faint);border-radius:12px;padding:20px 22px;
+}
+.hero-exp-title{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--sub);margin-bottom:8px}
+.hero-exp-text{font-size:.9rem;color:var(--text);line-height:1.7}
+.hero-exp-text strong{color:var(--blue)}
+
+/* ── Three insight cards ── */
+.insights{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.insight{
+  background:var(--white);border:1px solid var(--border);border-radius:12px;
+  padding:16px 18px;box-shadow:var(--shadow);
+}
+.insight-icon{font-size:1.4rem;margin-bottom:10px;display:block}
+.insight-title{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--sub);margin-bottom:4px}
+.insight-val{font-size:1.5rem;font-weight:800;letter-spacing:-.03em;line-height:1;margin-bottom:6px}
+.insight-desc{font-size:.8rem;color:var(--sub);line-height:1.55}
+
+/* ── Chart card ── */
+.chart-card{
+  background:var(--white);border:1px solid var(--border);border-radius:14px;
+  padding:20px 24px;box-shadow:var(--shadow);
+}
+.chart-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:12px}
+.chart-title-group{}
+.chart-title{font-size:.95rem;font-weight:700;color:var(--text)}
+.chart-subtitle{font-size:.75rem;color:var(--sub);margin-top:3px}
+.chart-controls{display:flex;gap:4px}
+.cr-btn{
+  font-size:.72rem;font-weight:500;padding:4px 12px;border-radius:6px;
+  border:1px solid var(--border);background:transparent;color:var(--sub);
+  cursor:pointer;transition:all .14s;
+}
+.cr-btn.active,.cr-btn:hover{background:var(--blue);border-color:var(--blue);color:#fff}
+.chart-zones{display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap}
+.zone{display:flex;align-items:center;gap:5px;font-size:.7rem;color:var(--sub)}
+.zone-dot{width:8px;height:8px;border-radius:50%}
+.chart-box{position:relative;height:260px}
+.chart-note{font-size:.72rem;color:var(--sub);margin-top:10px}
+
+/* ── Forecaster ── */
+.forecaster{
+  background:var(--white);border:1px solid var(--border);border-radius:14px;
+  padding:20px 24px;box-shadow:var(--shadow);
+}
+.forecaster-inner{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+.forecaster-left{}
+.forecaster-title{font-size:.95rem;font-weight:700;margin-bottom:4px}
+.forecaster-sub{font-size:.8rem;color:var(--sub);margin-bottom:22px;line-height:1.55}
+.slider-list{display:flex;flex-direction:column;gap:18px}
+.sl{display:flex;flex-direction:column;gap:7px}
+.sl-top{display:flex;justify-content:space-between;align-items:center}
+.sl-name{font-size:.8rem;font-weight:500;color:var(--text)}
+.sl-chip{
+  font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:99px;
+  background:var(--faint);color:var(--sub);min-width:48px;text-align:center;
+  border:1px solid var(--border);
+}
+input[type=range]{
+  -webkit-appearance:none;width:100%;height:4px;background:var(--border);
+  border-radius:99px;outline:none;cursor:pointer;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--blue);cursor:pointer;
+  box-shadow:0 0 0 3px rgba(29,78,216,.15);
+}
+input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 0 4px rgba(29,78,216,.2)}
+.forecaster-right{
+  border:1px solid var(--border);border-radius:14px;padding:24px;
+  background:var(--faint);display:flex;flex-direction:column;gap:16px;
+}
+.forecast-result-area{}
+.forecast-result-lbl{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--sub);margin-bottom:6px}
+.forecast-result-val{font-size:3.6rem;font-weight:900;letter-spacing:-.06em;line-height:1;transition:color .3s}
+.forecast-result-unit{font-size:1.1rem;font-weight:500;color:var(--sub)}
+.forecast-result-caption{font-size:.82rem;color:var(--sub);margin-top:5px;line-height:1.5}
+.forecast-explain{
+  background:var(--white);border:1px solid var(--border);border-radius:10px;
+  padding:14px 16px;font-size:.82rem;color:var(--text);line-height:1.6;
+}
+
+/* ── FAQ ── */
+.faq{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.faq-item{
+  background:var(--white);border:1px solid var(--border);border-radius:12px;
+  padding:16px 18px;box-shadow:var(--shadow);
+}
+.faq-q{font-size:.88rem;font-weight:700;color:var(--text);margin-bottom:7px}
+.faq-a{font-size:.8rem;color:var(--sub);line-height:1.65}
+
+/* ── Footer ── */
+footer{
+  text-align:center;padding:20px 24px;border-top:1px solid var(--border);
+  font-size:.72rem;color:var(--sub);background:var(--white);
+}
+footer a{color:var(--blue);text-decoration:none}
+footer a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="header-brand">
+      <div class="header-icon">📊</div>
+      <div>
+        <div class="header-title">US Inflation Tracker</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <span class="header-meta" id="last-date">Loading…</span>
+      <span class="live"><span class="live-dot"></span>Updated monthly</span>
+    </div>
+  </div>
+</header>
+
+<div class="page">
+
+  <!-- ── HERO ──────────────────────────────────────────────────────────── -->
+  <div class="hero" id="hero-card">
+      <div class="hero-left">
+        <div class="hero-eyebrow">Annual Inflation Rate</div>
+        <div>
+          <span class="hero-number" id="hero-num">—</span><span class="hero-unit">%</span>
+        </div>
+        <div class="hero-label">Prices are rising at this rate compared to a year ago</div>
+        <div id="hero-badge" class="hero-badge badge-amber">Calculating…</div>
+      </div>
+      <div class="hero-right">
+        <div class="hero-explanation">
+          <div class="hero-exp-title">What does this mean?</div>
+          <div class="hero-exp-text" id="hero-explain">Loading…</div>
+        </div>
+      </div>
+    </div>
+  <!-- ── THREE INSIGHTS ─────────────────────────────────────────────────── -->
+  <div class="insights">
+      <div class="insight">
+        <span class="insight-icon">📅</span>
+        <div class="insight-title">Compared to Last Year</div>
+        <div class="insight-val" id="ins-trend">—</div>
+        <div class="insight-desc" id="ins-trend-desc">Loading…</div>
+      </div>
+      <div class="insight">
+        <span class="insight-icon">🔮</span>
+        <div class="insight-title">What the Model Expects</div>
+        <div class="insight-val" id="ins-forecast">—</div>
+        <div class="insight-desc" id="ins-forecast-desc">Loading…</div>
+      </div>
+      <div class="insight">
+        <span class="insight-icon">🔑</span>
+        <div class="insight-title">Biggest Driver Right Now</div>
+        <div class="insight-val" id="ins-driver">—</div>
+        <div class="insight-desc" id="ins-driver-desc">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CHART ──────────────────────────────────────────────────────────── -->
+  <div class="chart-card">
+      <div class="chart-head">
+        <div class="chart-title-group">
+          <div class="chart-title">How has inflation changed?</div>
+          <div class="chart-subtitle">Annual percentage change in consumer prices (CPI) · United States</div>
+        </div>
+        <div class="chart-controls">
+          <button class="cr-btn" data-y="10">10 Years</button>
+          <button class="cr-btn active" data-y="25">25 Years</button>
+          <button class="cr-btn" data-y="35">All Time</button>
+        </div>
+      </div>
+      <div class="chart-zones">
+        <span class="zone"><span class="zone-dot" style="background:#DCFCE7"></span>Healthy (1–3%)</span>
+        <span class="zone"><span class="zone-dot" style="background:#FEF9C3"></span>Elevated (3–6%)</span>
+        <span class="zone"><span class="zone-dot" style="background:#FEE2E2"></span>High (above 6%)</span>
+        <span class="zone"><span class="zone-dot" style="background:#E0E7FF;border:1px solid #A5B4FC"></span>Fed target: 2%</span>
+      </div>
+      <div class="chart-box"><canvas id="main-chart"></canvas></div>
+      <div class="chart-note">Source: Federal Reserve (FRED) · Bureau of Labor Statistics · Data through <span id="chart-thru">—</span></div>
+    </div>
+
+  <!-- ── FORECASTER ─────────────────────────────────────────────────────── -->
+  <div class="forecaster">
+      <div class="forecaster-inner">
+        <div class="forecaster-left">
+          <div class="forecaster-title">What if conditions change?</div>
+          <div class="forecaster-sub">Move the sliders to explore how different economic conditions would affect inflation. The estimate updates automatically.</div>
+          <div class="slider-list">
+            <div class="sl">
+              <div class="sl-top">
+                <span class="sl-name">Unemployment rate</span>
+                <span class="sl-chip" id="sv-unemp">3.7%</span>
+              </div>
+              <input type="range" id="sl-unemp" min="1" max="15" step="0.1" value="3.7">
+              <div style="display:flex;justify-content:space-between;font-size:.65rem;color:var(--sub)"><span>More jobs</span><span>Fewer jobs</span></div>
+            </div>
+            <div class="sl">
+              <div class="sl-top">
+                <span class="sl-name">Federal interest rate</span>
+                <span class="sl-chip" id="sv-ff">5.25%</span>
+              </div>
+              <input type="range" id="sl-ff" min="0" max="20" step="0.25" value="5.25">
+              <div style="display:flex;justify-content:space-between;font-size:.65rem;color:var(--sub)"><span>Lower (cheaper loans)</span><span>Higher (expensive loans)</span></div>
+            </div>
+            <div class="sl">
+              <div class="sl-top">
+                <span class="sl-name">Oil price per barrel</span>
+                <span class="sl-chip" id="sv-oil">$85</span>
+              </div>
+              <input type="range" id="sl-oil" min="20" max="150" step="1" value="85">
+              <div style="display:flex;justify-content:space-between;font-size:.65rem;color:var(--sub)"><span>Cheap energy</span><span>Expensive energy</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="forecaster-right">
+          <div class="forecast-result-area">
+            <div class="forecast-result-lbl">Estimated Inflation</div>
+            <div>
+              <span class="forecast-result-val" id="f-val">—</span><span class="forecast-result-unit">% /yr</span>
+            </div>
+            <div class="forecast-result-caption" id="f-caption">Adjust the sliders to see an estimate.</div>
+          </div>
+          <div class="forecast-explain" id="f-explain">
+            Our model analyzes patterns in economic data going back to 1990 to produce this estimate.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <!-- ── FAQ ────────────────────────────────────────────────────────────── -->
+  <div class="faq">
+      <div class="faq-item">
+        <div class="faq-q">What is inflation?</div>
+        <div class="faq-a">Inflation means prices are going up over time. If inflation is 3%, something that cost $100 last year now costs $103. A little inflation is normal and healthy — the Federal Reserve aims for 2% per year.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">Why does it matter to me?</div>
+        <div class="faq-a">High inflation means your money buys less. Groceries, rent, and gas all cost more. It also affects interest rates on your mortgage, car loan, and savings account.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">What is the Fed's 2% target?</div>
+        <div class="faq-a">The Federal Reserve (America's central bank) tries to keep inflation near 2% per year. Too low can slow the economy; too high erodes purchasing power. They raise or lower interest rates to steer inflation toward that target.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">How is this forecast made?</div>
+        <div class="faq-a">We use machine-learning models trained on 35 years of US economic data — oil prices, unemployment, interest rates, money supply and more. The model finds patterns to estimate where inflation is headed.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  Data: <a href="https://fred.stlouisfed.org" target="_blank">Federal Reserve (FRED)</a> · Bureau of Labor Statistics · 1990–2025 &nbsp;|&nbsp;
+  <a href="/docs" target="_blank">API</a> &nbsp;|&nbsp; For educational purposes
+</footer>
+
+<script>
+/* ═══ Constants ═══════════════════════════════════════════════════════════ */
+const BASE = '';
+let chartInst = null;
+let predictTimer = null;
+
+/* ═══ Helpers ═════════════════════════════════════════════════════════════ */
+function fmtDate(s){ const d=new Date(s+'T00:00:00'); return d.toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
+function fmtDateShort(s){ const d=new Date(s+'T00:00:00'); return d.toLocaleDateString('en-US',{month:'short',year:'numeric'}); }
+
+function rateStatus(v){
+  if(v>=6)  return {cls:'badge-red',  word:'Very High',  color:'#DC2626'};
+  if(v>=3)  return {cls:'badge-amber',word:'Elevated',   color:'#B45309'};
+  if(v>=1)  return {cls:'badge-green',word:'Healthy',    color:'#059669'};
+  return         {cls:'badge-amber', word:'Very Low',   color:'#B45309'};
+}
+
+function rateExplain(v, date){
+  const mo = fmtDate(date);
+  if(v>=8)  return `In ${mo}, the average American household faced <strong>very high inflation of ${v.toFixed(1)}%</strong>. This level significantly erodes purchasing power — everyday items like groceries and gas cost noticeably more than a year ago.`;
+  if(v>=5)  return `In ${mo}, inflation stood at <strong>${v.toFixed(1)}%</strong> — well above normal. The Federal Reserve targets 2%, so at this level it is actively trying to bring prices down, usually by raising interest rates.`;
+  if(v>=3)  return `In ${mo}, inflation was <strong>${v.toFixed(1)}%</strong> — slightly above the Federal Reserve's 2% goal. Prices are still rising faster than ideal, but the economy is generally stable.`;
+  if(v>=1.5)return `In ${mo}, inflation was <strong>${v.toFixed(1)}%</strong> — right in the healthy zone near the Federal Reserve's 2% target. This is considered normal and is generally good for the economy.`;
+  return         `In ${mo}, inflation was unusually low at <strong>${v.toFixed(1)}%</strong>. While low inflation sounds good, very low inflation can signal a slowing economy.`;
+}
+
+function forecastExplain(v){
+  if(v>=5)  return '⚠️ This scenario suggests high inflation. The Federal Reserve would likely raise interest rates to bring it down.';
+  if(v>=3)  return '🔸 Inflation above the Fed\'s 2% target. Everyday prices — groceries, rent, gas — would be rising faster than normal.';
+  if(v>=1.5)return '✅ This scenario suggests healthy inflation, close to the Federal Reserve\'s ideal of 2% per year.';
+  return         '❄️ Very low inflation can signal a slowing economy. The Fed might cut interest rates to stimulate growth.';
+}
+
+function friendlyDriverName(label){
+  if(!label) return 'Multiple factors';
+  const map = {
+    'Producer Price Change (YoY)': 'Rising factory costs',
+    'CPI Volatility (12-mo)':      'Price swings over the past year',
+    'Fed Interest Rate':           'Federal Reserve interest rates',
+    'Unemployment Change (YoY)':   'Changes in unemployment',
+    'CPI — 1 month ago':           'Last month\'s prices',
+    'Money Supply (M2)':           'How much money is in circulation',
+    'Oil Price Change (YoY)':      'Changes in oil prices',
+    'CPI — 1 year ago':            'Prices from one year ago',
+    'Interest Rate Change (YoY)':  'How interest rates have shifted',
+    'CPI — 3 months ago':          'Prices from three months ago',
+  };
+  return map[label] || label;
+}
+
+/* ═══ Hero & Insights ════════════════════════════════════════════════════ */
+async function loadHero(){
+  try{
+    const s = await (await fetch(`${BASE}/summary?model=xgboost`)).json();
+    const v = s.latest_actual;
+    const st = rateStatus(v);
+
+    document.getElementById('hero-num').textContent = v.toFixed(1);
+    document.getElementById('hero-num').style.color = st.color;
+    document.getElementById('last-date').textContent = 'Data through ' + fmtDate(s.latest_date);
+    document.getElementById('chart-thru').textContent = fmtDate(s.latest_date);
+
+    const badge = document.getElementById('hero-badge');
+    badge.textContent = st.word;
+    badge.className = 'hero-badge ' + st.cls;
+
+    document.getElementById('hero-explain').innerHTML = rateExplain(v, s.latest_date);
+
+    // Insight 1: trend
+    const trendEl = document.getElementById('ins-trend');
+    const trendDesc = document.getElementById('ins-trend-desc');
+    if(s.trend !== null){
+      const up = s.trend > 0.05;
+      const dn = s.trend < -0.05;
+      trendEl.textContent = up ? '↑ Going Up' : dn ? '↓ Coming Down' : '→ Holding Steady';
+      trendEl.style.color = up ? '#DC2626' : dn ? '#059669' : '#B45309';
+      trendDesc.textContent = up
+        ? `Inflation has risen by about ${s.trend.toFixed(2)} percentage points recently — prices are accelerating.`
+        : dn
+        ? `Inflation has dropped by about ${Math.abs(s.trend).toFixed(2)} percentage points recently — prices are cooling.`
+        : 'Inflation has been roughly steady over the past six months.';
+    }
+
+    // Insight 2: forecast
+    const fEl = document.getElementById('ins-forecast');
+    const fDesc = document.getElementById('ins-forecast-desc');
+    if(s.latest_pred !== null){
+      fEl.textContent = s.latest_pred.toFixed(1) + '%';
+      fEl.style.color = rateStatus(s.latest_pred).color;
+      const diff = (s.latest_pred - v).toFixed(2);
+      fDesc.textContent = `The model forecasts inflation around ${s.latest_pred.toFixed(1)}% — ${
+        Math.abs(diff) < 0.1 ? 'roughly the same as today' :
+        diff > 0 ? `${diff} points higher than today` :
+                   `${Math.abs(diff)} points lower than today`}.`;
+    }
+  } catch(e){ console.warn('hero error', e); }
+}
+
+async function loadDriver(){
+  try{
+    const items = await (await fetch(`${BASE}/feature-importance?top=1`)).json();
+    if(items.length){
+      const name = friendlyDriverName(items[0].label);
+      document.getElementById('ins-driver').textContent = name;
+      document.getElementById('ins-driver-desc').textContent =
+        `"${name}" is the single strongest predictor of where inflation goes next, based on patterns since 1990.`;
+    }
+  } catch(e){ console.warn('driver error', e); }
+}
+
+/* ═══ Chart ══════════════════════════════════════════════════════════════ */
+async function loadChart(years=25){
+  const yearFrom = 2025 - years;
+  try{
+    const d = await (await fetch(`${BASE}/chart-data?model=xgboost&year_from=${yearFrom}&year_to=2025`)).json();
+    buildChart(d);
+  } catch(e){ console.warn('chart error', e); }
+}
+
+function buildChart(d){
+  const ctx = document.getElementById('main-chart').getContext('2d');
+  if(chartInst) chartInst.destroy();
+
+  chartInst = new Chart(ctx, {
+    data:{
+      labels: d.dates,
+      datasets:[
+        // Healthy zone band (1–3%)
+        { type:'line', data:d.dates.map(()=>3), borderWidth:0, fill:'+1',
+          backgroundColor:'rgba(220,252,231,0.5)', pointRadius:0, tension:0, label:null },
+        { type:'line', data:d.dates.map(()=>1), borderWidth:0, fill:false,
+          backgroundColor:'transparent', pointRadius:0, tension:0, label:null },
+        // Main inflation line
+        { type:'line', data:d.actual, label:'Inflation',
+          borderColor:'#1D4ED8', borderWidth:2.5, fill:false, tension:0.25,
+          pointRadius:0, pointHoverRadius:5,
+          pointHoverBackgroundColor:'#1D4ED8', pointHoverBorderColor:'#fff',
+          pointHoverBorderWidth:2 },
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ display:false },
+        tooltip:{
+          backgroundColor:'#0F172A',
+          borderColor:'rgba(255,255,255,.1)',
+          borderWidth:1,
+          titleColor:'#94A3B8',
+          bodyColor:'#F1F5F9',
+          padding:12, cornerRadius:8, titleFont:{size:11},
+          callbacks:{
+            title: items => fmtDateShort(items[0].label),
+            label: item => item.dataset.label==='Inflation'
+              ? `  Inflation: ${item.parsed.y.toFixed(1)}%` : null,
+            afterLabel: item => {
+              if(item.dataset.label!=='Inflation') return null;
+              const v = item.parsed.y;
+              return v>=6?' ⚠️ Very high':v>=3?' 🔸 Elevated':v>=1?' ✅ Healthy':' ❄️ Very low';
+            }
+          }
+        },
+        annotation: undefined,
+      },
+      scales:{
+        x:{
+          type:'time', time:{ unit:'year', tooltipFormat:'yyyy-MM-dd' },
+          grid:{ color:'rgba(0,0,0,.04)', drawBorder:false },
+          ticks:{ color:'#94A3B8', font:{ size:11, family:'Inter' }, maxRotation:0 },
+          border:{ display:false },
+        },
+        y:{
+          grid:{ color:'rgba(0,0,0,.05)', drawBorder:false },
+          ticks:{
+            color:'#94A3B8', font:{ size:11, family:'Inter' },
+            callback: v => v+'%'
+          },
+          border:{ display:false },
+        }
+      }
+    }
+  });
+
+  // 2% target line drawn manually on canvas
+  Chart.register({
+    id:'targetLine',
+    afterDraw(chart){
+      const {ctx: c, scales:{x,y}} = chart;
+      if(!y) return;
+      const yPos = y.getPixelForValue(2);
+      c.save();
+      c.setLineDash([5,4]);
+      c.strokeStyle='rgba(99,102,241,.5)';
+      c.lineWidth=1.2;
+      c.beginPath();
+      c.moveTo(x.left, yPos);
+      c.lineTo(x.right, yPos);
+      c.stroke();
+      c.setLineDash([]);
+      c.fillStyle='rgba(99,102,241,.7)';
+      c.font='500 10px Inter, system-ui';
+      c.fillText('Fed target 2%', x.right - 84, yPos - 5);
+      c.restore();
+    }
+  });
+}
+
+/* ═══ Forecaster ═════════════════════════════════════════════════════════ */
+const debounce = (fn,ms) => (...args) => {
+  clearTimeout(predictTimer);
+  predictTimer = setTimeout(() => fn(...args), ms);
+};
+
+const runForecast = debounce(async () => {
+  const body = {
+    m2: 2150,
+    unemployment: parseFloat(document.getElementById('sl-unemp').value),
+    fed_funds:    parseFloat(document.getElementById('sl-ff').value),
+    oil_wti:      parseFloat(document.getElementById('sl-oil').value),
+    ppi: 230, gdp_growth: 2.1,
+    month: new Date().getMonth()+1,
+    model: 'xgboost',
+  };
+  try{
+    const r = await fetch(`${BASE}/predict`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok) throw 0;
+    const d = await r.json();
+    const v = d.inflation_rate;
+    const st = rateStatus(v);
+    const fv = document.getElementById('f-val');
+    fv.textContent = v.toFixed(1);
+    fv.style.color = st.color;
+    document.getElementById('f-caption').textContent = `Estimated annual inflation: ${v.toFixed(1)}% — ${st.word.toLowerCase()}`;
+    document.getElementById('f-explain').innerHTML = forecastExplain(v);
+  } catch(e){
+    document.getElementById('f-val').textContent = '—';
+    document.getElementById('f-explain').textContent = 'Could not connect to the server.';
+  }
+}, 300);
+
+function wireSliders(){
+  [['sl-unemp','sv-unemp',v=>v.toFixed(1)+'%'],
+   ['sl-ff','sv-ff',v=>v.toFixed(2)+'%'],
+   ['sl-oil','sv-oil',v=>'$'+Math.round(v)]
+  ].forEach(([sid,vid,fmt])=>{
+    const sl=document.getElementById(sid), lbl=document.getElementById(vid);
+    sl.addEventListener('input',()=>{ lbl.textContent=fmt(parseFloat(sl.value)); runForecast(); });
+  });
+  runForecast();
+}
+
+/* ═══ Chart controls ═════════════════════════════════════════════════════ */
+function wireChartControls(){
+  document.querySelectorAll('.cr-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('.cr-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      loadChart(parseInt(btn.dataset.y));
+    });
+  });
+}
+
+/* ═══ Boot ═══════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  wireSliders();
+  wireChartControls();
+  Promise.all([loadHero(), loadDriver(), loadChart(25)]);
+});
+</script>
+</body>
+</html>
