@@ -43,6 +43,9 @@ package-lock.json
 .coverage
 htmlcov/
 
+# Claude Code internal files
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
