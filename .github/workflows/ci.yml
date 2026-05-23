@@ -31,4 +31,8 @@ jobs:
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
-          pytest tests/ --cov=src --cov=api --cov-report=term-missing --cov-fail-under=70 -v
+          pytest tests/ \
+            --cov=src --cov=api \
+            --cov-config=.coveragerc \
+            --cov-report=term-missing \
+            --cov-fail-under=70 -v

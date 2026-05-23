@@ -1,0 +1,22 @@
+[run]
+omit =
+    # Requires FRED API key + network
+    src/ingest.py
+    # Requires trained model files on disk
+    src/train.py
+    src/predict.py
+    src/ensemble.py
+    src/shap_analysis.py
+    src/walkforward.py
+    src/ablation.py
+    src/regime.py
+    src/spf_comparison.py
+    # API integration layer — requires loaded model bundles
+    api/main.py
+    # Test files themselves
+    tests/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
