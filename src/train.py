@@ -100,11 +100,12 @@ def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series) -> dict:
 # LSTM
 # ---------------------------------------------------------------------------
 
-def train_lstm(X_train: pd.DataFrame, y_train: pd.Series, lookback: int = 24) -> dict:
+def train_lstm(X_train: pd.DataFrame, y_train: pd.Series, lookback: int = 12) -> dict:
     import tensorflow as tf
     from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
+    from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Bidirectional, BatchNormalization
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    from tensorflow.keras.regularizers import l2
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_train)
@@ -116,26 +117,28 @@ def train_lstm(X_train: pd.DataFrame, y_train: pd.Series, lookback: int = 24) ->
     Xs, ys = np.array(Xs), np.array(ys)
 
     n_features = Xs.shape[2]
+    # Simpler bidirectional LSTM — less prone to overfitting on small macro datasets
     model = Sequential([
         Input(shape=(lookback, n_features)),
-        LSTM(128, return_sequences=True),
-        Dropout(0.2),
-        LSTM(64, return_sequences=False),
-        Dropout(0.2),
-        Dense(32, activation="relu"),
+        Bidirectional(LSTM(64, return_sequences=True, kernel_regularizer=l2(1e-4))),
+        Dropout(0.3),
+        BatchNormalization(),
+        LSTM(32, return_sequences=False, kernel_regularizer=l2(1e-4)),
+        Dropout(0.3),
+        Dense(16, activation="relu"),
         Dense(1),
     ])
-    model.compile(optimizer="adam", loss="mse")
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=5e-4), loss="mse")
 
     callbacks = [
-        EarlyStopping(monitor="val_loss", patience=15, restore_best_weights=True),
-        ReduceLROnPlateau(monitor="val_loss", patience=7, factor=0.5, min_lr=1e-5),
+        EarlyStopping(monitor="val_loss", patience=20, restore_best_weights=True),
+        ReduceLROnPlateau(monitor="val_loss", patience=10, factor=0.5, min_lr=1e-6),
     ]
     model.fit(
         Xs, ys,
-        epochs=200,
+        epochs=300,
         batch_size=16,
-        validation_split=0.1,
+        validation_split=0.15,
         callbacks=callbacks,
         verbose=0,
     )
@@ -226,17 +229,18 @@ def train_ensemble(
     linear_bundle: dict,
     xgb_bundle: dict,
     arima_bundle: dict,
+    lstm_metrics: dict | None = None,
+    linear_metrics: dict | None = None,
 ) -> dict:
     """
-    Build a stacking ensemble using out-of-fold predictions as meta-features.
-    Level-0 models: Ridge (plain, fixed alpha) and XGBoost.
-    Meta-learner: Ridge regression.
-    Note: we clone each level-0 model with fixed hyperparams for OOF generation,
-    then use the already-fitted bundles for test-time inference.
+    Stacking ensemble (Level-0: Ridge + XGBoost; Level-1: Ridge meta-learner).
+    LSTM is excluded from the ensemble — it uses a different input shape and
+    historically underperforms the tabular models on this dataset.
+    Meta-model coefficients are saved as ensemble weights for transparency.
     """
+    from sklearn.metrics import mean_squared_error as mse_fn
     tscv = TimeSeriesSplit(n_splits=5)
 
-    # --- OOF predictions using manual loop (cross_val_predict requires partitions) ---
     scaler_lin = linear_bundle["scaler"]
     X_scaled   = scaler_lin.transform(X_train)
     alpha_best = float(linear_bundle["model"].alpha_)
@@ -246,12 +250,10 @@ def train_ensemble(
     oof_xgb    = np.zeros(len(y_train))
 
     for tr_idx, val_idx in tscv.split(X_scaled):
-        # Linear OOF
         ridge_fold = Ridge(alpha=alpha_best)
         ridge_fold.fit(X_scaled[tr_idx], y_train.iloc[tr_idx])
         oof_linear[val_idx] = ridge_fold.predict(X_scaled[val_idx])
 
-        # XGBoost OOF
         xgb_fold = xgb.XGBRegressor(
             objective="reg:squarederror", random_state=42, verbosity=0,
             n_estimators=bp.get("n_estimators", 200),
@@ -263,15 +265,28 @@ def train_ensemble(
         xgb_fold.fit(X_train.iloc[tr_idx], y_train.iloc[tr_idx])
         oof_xgb[val_idx] = xgb_fold.predict(X_train.iloc[val_idx])
 
-    # --- Stack and fit meta-learner ---
     meta_X     = np.column_stack([oof_linear, oof_xgb])
     meta_model = Ridge(alpha=1.0)
     meta_model.fit(meta_X, y_train)
+
+    # Normalise meta-model coefficients to sum to 1 for interpretable weights
+    raw_coefs  = meta_model.coef_
+    pos_coefs  = np.maximum(raw_coefs, 0)
+    total      = pos_coefs.sum() if pos_coefs.sum() > 0 else 1.0
+    weights    = {
+        "Linear Regression": round(float(pos_coefs[0] / total), 4),
+        "XGBoost":           round(float(pos_coefs[1] / total), 4),
+        "LSTM Neural Net":   0.0,   # excluded from ensemble
+        "raw_intercept":     round(float(meta_model.intercept_), 4),
+    }
+    (MODELS_DIR / "ensemble_weights.json").write_text(json.dumps(weights, indent=2))
+    print(f"  Ensemble weights: {weights}")
 
     bundle = {
         "meta_model":    meta_model,
         "linear_bundle": linear_bundle,
         "xgb_bundle":    xgb_bundle,
+        "weights":       weights,
     }
     joblib.dump(bundle, MODELS_DIR / "ensemble.joblib")
     return bundle
@@ -319,7 +334,7 @@ def train_all(
     run_walk_forward: bool = False,
     df_full: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    from src.evaluate import compute_metrics, compare_models
+    from src.evaluate import compute_metrics, compare_models, naive_baseline_metrics, bootstrap_confidence_interval
 
     # Persist column order so the API can reindex inference rows
     feature_cols = list(X_train.columns)
@@ -403,6 +418,22 @@ def train_all(
         results["Ensemble"] = {"y_true": y_test.values, "y_pred": y_pred_ens, "metrics": metrics}
         all_metrics["ensemble"] = metrics
     print(f"  Ensemble: {metrics}")
+
+    # --- Naive baseline (persistence: predict = last month's actual) ---
+    naive_metrics = naive_baseline_metrics(y_test.values)
+    all_metrics["naive"] = naive_metrics
+    print(f"  Naive baseline: {naive_metrics}")
+
+    # --- Bootstrap 90% confidence intervals for best models ---
+    ci_data = {}
+    for key, res in [("linear", results["Linear"]),
+                     ("xgboost", results["XGBoost"]),
+                     ("ensemble", results["Ensemble"])]:
+        ci = bootstrap_confidence_interval(res["y_true"], res["y_pred"])
+        ci_data[key] = ci
+        print(f"  {key} CI ±{ci['ci_half_width']} (90%), residual std={ci['residual_std']}")
+    (MODELS_DIR / "confidence_intervals.json").write_text(json.dumps(ci_data, indent=2))
+    print("Bootstrap CIs saved.")
 
     # Persist all metrics
     _save_metrics(all_metrics)

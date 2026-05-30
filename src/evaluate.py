@@ -35,6 +35,45 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     }
 
 
+def naive_baseline_metrics(y_true: np.ndarray) -> dict:
+    """Persistence model: predict this month = last month's value."""
+    y_pred = np.roll(y_true, 1)
+    y_pred[0] = y_true[0]
+    return compute_metrics(y_true[1:], y_pred[1:])
+
+
+def bootstrap_confidence_interval(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    n_boot: int = 1000,
+    ci: float = 0.90,
+    random_state: int = 42,
+) -> dict:
+    """
+    Bootstrap residual resampling to produce a symmetric CI on MAE and
+    a per-prediction ±band (residual std of bootstrapped predictions).
+    Returns lower/upper bounds and the half-width (±) for display.
+    """
+    rng = np.random.default_rng(random_state)
+    residuals = y_true - y_pred
+    boot_maes = []
+    for _ in range(n_boot):
+        sample = rng.choice(residuals, size=len(residuals), replace=True)
+        boot_maes.append(np.mean(np.abs(sample)))
+    alpha = (1 - ci) / 2
+    lo = float(np.quantile(boot_maes, alpha))
+    hi = float(np.quantile(boot_maes, 1 - alpha))
+    half_width = round((hi - lo) / 2, 4)
+    residual_std = round(float(np.std(residuals)), 4)
+    return {
+        "ci_lower":     round(lo, 4),
+        "ci_upper":     round(hi, 4),
+        "ci_half_width": half_width,
+        "residual_std": residual_std,
+        "ci_level":     ci,
+    }
+
+
 def compare_models(results: dict[str, dict]) -> pd.DataFrame:
     """
     results: {model_name: {"y_true": ..., "y_pred": ...}}

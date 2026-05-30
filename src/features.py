@@ -44,6 +44,17 @@ def build_feature_matrix(raw: dict) -> pd.DataFrame:
     df["rate_diff"] = df["fed_funds"].diff(1)
     df["m2_rate_interact"] = df["m2_mom"] * df["rate_diff"]
 
+    # Inflation momentum: 3-month and 6-month rate of change in inflation_rate itself
+    df["infl_mom3"] = df["inflation_rate"].diff(3)
+    df["infl_mom6"] = df["inflation_rate"].diff(6)
+
+    # Yield curve proxy: fed_funds spread over its own 12-month moving average
+    # (steepening = growth expectations rising = leading inflation signal)
+    df["yield_curve_proxy"] = df["fed_funds"] - df["fed_funds"].rolling(12).mean()
+
+    # Real interest rate proxy: fed_funds minus trailing 12-month inflation
+    df["real_rate"] = df["fed_funds"] - df["inflation_rate"].shift(1)
+
     # Seasonal dummies (month of year)
     for m in range(1, 13):
         df[f"month_{m}"] = (df.index.month == m).astype(int)

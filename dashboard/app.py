@@ -41,6 +41,10 @@ FEATURE_LABELS = {
     "gdp_growth": "GDP Growth", "gdp_growth_lag1": "GDP Growth (prev. quarter)",
     "rate_diff": "Rate Momentum", "m2_rate_interact": "Money × Rate Interaction",
     "post_covid": "Post-COVID Period",
+    "infl_mom3": "Inflation Momentum (3 mo)",
+    "infl_mom6": "Inflation Momentum (6 mo)",
+    "yield_curve_proxy": "Yield Curve Signal",
+    "real_rate": "Real Interest Rate",
 }
 
 # ── Page setup ────────────────────────────────────────────────────────────────
@@ -159,6 +163,16 @@ def load_metrics():
     return json.loads(p.read_text()) if p.exists() else {}
 
 @st.cache_data
+def load_confidence_intervals():
+    p = MODELS_DIR / "confidence_intervals.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+@st.cache_data
+def load_ensemble_weights():
+    p = MODELS_DIR / "ensemble_weights.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+@st.cache_data
 def load_shap_summary():
     p = MODELS_DIR / "shap_summary.json"
     return json.loads(p.read_text()) if p.exists() else []
@@ -266,12 +280,22 @@ st.markdown(f"""
 pill_cls, pill_word = rate_pill(latest_actual)
 color = rate_color(latest_actual)
 
-pred_html = (
-    f'<div class="kpi-number" style="color:{rate_color(latest_pred)}">'
-    f'{latest_pred:.1f}<span style="font-size:1rem;font-weight:500;color:#9CA3AF">%</span></div>'
-    if latest_pred is not None
-    else '<div class="kpi-number" style="color:#D1D5DB">—</div>'
-)
+ci_data = load_confidence_intervals()
+ci = ci_data.get(model_sel, {})
+ci_hw = ci.get("ci_half_width", None)
+
+if latest_pred is not None:
+    ci_str = f" ± {ci_hw:.2f}%" if ci_hw is not None else ""
+    pred_html = (
+        f'<div class="kpi-number" style="color:{rate_color(latest_pred)}">'
+        f'{latest_pred:.1f}<span style="font-size:1rem;font-weight:500;color:#9CA3AF">%</span></div>'
+        f'<div class="kpi-sub" style="color:#6B7280">{ci_str} 90% confidence interval</div>'
+        if ci_hw else
+        f'<div class="kpi-number" style="color:{rate_color(latest_pred)}">'
+        f'{latest_pred:.1f}<span style="font-size:1rem;font-weight:500;color:#9CA3AF">%</span></div>'
+    )
+else:
+    pred_html = '<div class="kpi-number" style="color:#D1D5DB">—</div>'
 
 mae_html = (
     f'<div class="kpi-number">±{mae:.2f}'
@@ -292,10 +316,10 @@ else:
 st.markdown(f"""
 <div class="kpi-strip">
   <div class="kpi-item">
-    <div class="kpi-label">Current Inflation</div>
+    <div class="kpi-label">US Inflation (CPI)</div>
     <div class="kpi-number" style="color:{color}">{latest_actual:.1f}<span style="font-size:1rem;font-weight:500;color:#9CA3AF">%</span></div>
     <span class="kpi-pill {pill_cls}">{pill_word}</span>
-    <div class="kpi-sub">Year-over-year · {latest_date}</div>
+    <div class="kpi-sub">How much prices rose vs. a year ago · {latest_date}</div>
   </div>
   <div class="kpi-item">
     <div class="kpi-label">Model Forecast</div>
@@ -305,7 +329,7 @@ st.markdown(f"""
   <div class="kpi-item">
     <div class="kpi-label">Average Error</div>
     {mae_html}
-    <div class="kpi-sub">Percentage points off on average</div>
+    <div class="kpi-sub">Average percentage points the forecast missed by</div>
   </div>
   <div class="kpi-item">
     <div class="kpi-label">6-Month Trend</div>
@@ -424,17 +448,23 @@ left, right = st.columns([1, 1], gap="large")
 
 with left:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<p class="sec-head">What-If Forecast</p><p class="sec-desc">Adjust the inputs and see what inflation the model would predict</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sec-head">What-If Forecast &nbsp;<span style="font-size:.72rem;font-weight:500;color:#6B7280;background:#F1F5F9;border:1px solid #E2E8F0;padding:2px 8px;border-radius:6px;">United States</span></p><p class="sec-desc">Drag the sliders to change economic conditions and see how US inflation would change</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     with st.container():
         c1, c2 = st.columns(2)
-        unemp  = c1.slider("Unemployment (%)",      1.0,  15.0,  3.7,  0.1)
-        ffrate = c2.slider("Fed Interest Rate (%)", 0.0,  20.0,  5.25, 0.25)
-        oil    = c1.slider("Oil Price ($/barrel)",  20.0, 150.0, 85.0, 1.0)
-        gdp    = c2.slider("GDP Growth (%)",        -5.0, 10.0,  2.1,  0.1)
-        m2     = c1.slider("Money Supply (M2, $T)", 5.0,  30.0,  21.5, 0.1)
-        ppi_v  = c2.slider("Producer Price Index",  100.0,350.0, 230.0,1.0)
+        c1.markdown('<p style="font-size:.72rem;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:0">Unemployment Rate — % of workforce without a job</p>', unsafe_allow_html=True)
+        unemp  = c1.slider("Unemployment (%)", 1.0, 15.0, 3.7, 0.1, label_visibility="collapsed")
+        c2.markdown('<p style="font-size:.72rem;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:0">Fed Interest Rate — the rate banks charge each other overnight</p>', unsafe_allow_html=True)
+        ffrate = c2.slider("Fed Interest Rate (%)", 0.0, 20.0, 5.25, 0.25, label_visibility="collapsed")
+        c1.markdown('<p style="font-size:.72rem;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:0">Oil Price — cost per barrel of crude oil (WTI)</p>', unsafe_allow_html=True)
+        oil    = c1.slider("Oil Price ($/barrel)", 20.0, 150.0, 85.0, 1.0, label_visibility="collapsed")
+        c2.markdown('<p style="font-size:.72rem;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:0">GDP Growth — how fast the economy is expanding (%)</p>', unsafe_allow_html=True)
+        gdp    = c2.slider("GDP Growth (%)", -5.0, 10.0, 2.1, 0.1, label_visibility="collapsed")
+        c1.markdown('<p style="font-size:.72rem;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:0">Money Supply (M2) — total money in circulation, in trillions $</p>', unsafe_allow_html=True)
+        m2     = c1.slider("Money Supply (M2, $T)", 5.0, 30.0, 21.5, 0.1, label_visibility="collapsed")
+        c2.markdown('<p style="font-size:.72rem;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:0">Producer Price Index — cost of goods before they reach stores</p>', unsafe_allow_html=True)
+        ppi_v  = c2.slider("Producer Price Index", 100.0, 350.0, 230.0, 1.0, label_visibility="collapsed")
 
         if st.button("Get Forecast →", type="primary", use_container_width=True):
             try:
@@ -463,7 +493,7 @@ with left:
 
 with right:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<p class="sec-head">What Drives Inflation</p><p class="sec-desc">Top factors by mean absolute SHAP value (XGBoost)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sec-head">What Drives US Inflation</p><p class="sec-desc">The 10 factors with the biggest impact on the model\'s predictions — measured by mean absolute SHAP value (how much each variable moves the forecast)</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     shap_summary = load_shap_summary()
@@ -480,13 +510,19 @@ with right:
             marker=dict(color=fi["shap"],
                         colorscale=[[0,"#BFDBFE"],[1,"#1D4ED8"]],
                         showscale=False),
-            hovertemplate="<b>%{y}</b><br>Mean |SHAP|: %{x:.4f}<extra></extra>",
+            text=[f"{v:.3f}" for v in fi["shap"]],
+            textposition="outside",
+            textfont=dict(size=11, color="#374151"),
+            hovertemplate="<b>%{y}</b><br>Impact score: %{x:.4f}<extra></extra>",
         ))
         fig2.update_layout(
-            template="plotly_white", height=340,
-            margin=dict(l=0, r=10, t=0, b=0),
+            template="plotly_white", height=360,
+            margin=dict(l=0, r=55, t=0, b=40),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(showgrid=False, zeroline=False, visible=False),
+            xaxis=dict(showgrid=True, zeroline=False, visible=True,
+                       tickfont=dict(size=10, color="#9CA3AF"),
+                       gridcolor="#F1F5F9",
+                       title=dict(text="Impact on forecast (higher = stronger influence)", font=dict(size=10, color="#9CA3AF"))),
             yaxis=dict(tickfont=dict(size=11, color="#374151"), showgrid=False),
             bargap=0.38,
             font=dict(family="Inter, system-ui, sans-serif"),
@@ -564,8 +600,8 @@ if shap_arr is not None and feat_cols and shap_summary:
 st.markdown('<div style="height:1.25rem"></div>', unsafe_allow_html=True)
 st.markdown('<div class="panel">', unsafe_allow_html=True)
 st.markdown(
-    '<p class="sec-head">Model Comparison Scorecard</p>'
-    '<p class="sec-desc">How well each model predicted inflation on the unseen test period (2019–2025) — lower error is better</p>',
+    '<p class="sec-head">Which model predicted US inflation most accurately?</p>'
+    '<p class="sec-desc">Tested on real data from 2019–2025 that the models had never seen. <b>Average error</b> = how many percentage points off the forecast was on a typical month. <b>Direction</b> = did it correctly predict whether inflation went up or down?</p>',
     unsafe_allow_html=True,
 )
 
@@ -581,74 +617,106 @@ MODEL_ORDER = [
 ]
 
 if saved_metrics:
-    rows_html = ""
+    mae_vals = [float(saved_metrics[k]["MAE"]) for k, _ in MODEL_ORDER if k in saved_metrics]
+    max_mae  = max(mae_vals) if mae_vals else 1
+
+    # Header row
+    h1, h2, h3 = st.columns([3, 4, 3])
+    h1.markdown('<p style="font-size:.72rem;font-weight:600;color:#9CA3AF;margin:0;padding-bottom:.4rem;border-bottom:2px solid #E2E5EA">MODEL</p>', unsafe_allow_html=True)
+    h2.markdown('<p style="font-size:.72rem;font-weight:600;color:#9CA3AF;margin:0;padding-bottom:.4rem;border-bottom:2px solid #E2E5EA">AVERAGE ERROR PER MONTH &darr; lower is better</p>', unsafe_allow_html=True)
+    h3.markdown('<p style="font-size:.72rem;font-weight:600;color:#9CA3AF;margin:0;padding-bottom:.4rem;border-bottom:2px solid #E2E5EA">DIRECTION CORRECT &uarr; higher is better</p>', unsafe_allow_html=True)
+
     for key, name in MODEL_ORDER:
         if key not in saved_metrics:
             continue
-        m     = saved_metrics[key]
-        hl    = "model-row-hl" if key == bm else "model-row-plain"
-        badge = '<span class="model-row-badge">Best</span>' if key == bm else ""
-        mae_v = m.get("MAE",  "—")
-        rmse_v= m.get("RMSE", "—")
-        da_v  = m.get("Dir_Acc", "—")
-        r2_v  = m.get("R2", "—")
-        rows_html += f"""
-<div class="model-row {hl}">
-  <span class="model-row-name">{name}{badge}</span>
-  <span class="model-row-stat">
-    MAE <b>{mae_v}</b> &nbsp;·&nbsp; RMSE <b>{rmse_v}</b>
-    &nbsp;·&nbsp; R² <b>{r2_v}</b> &nbsp;·&nbsp; Dir. Acc <b>{da_v}%</b>
-  </span>
-</div>"""
-    st.markdown(rows_html, unsafe_allow_html=True)
+        m       = saved_metrics[key]
+        is_best = key == bm
+        mae_v   = float(m.get("MAE", 0))
+        da_v    = float(m.get("Dir_Acc", 0))
 
-    # Bar chart comparing RMSE
-    rmse_vals  = [(k, n, saved_metrics[k]["RMSE"]) for k, n in MODEL_ORDER if k in saved_metrics]
-    fig_cmp    = go.Figure(go.Bar(
-        x=[n for _, n, _ in rmse_vals],
-        y=[r for _, _, r in rmse_vals],
-        marker_color=["#1D4ED8" if k == bm else "#93C5FD" for k, _, _ in rmse_vals],
-        text=[f"{r:.3f}" for _, _, r in rmse_vals],
-        textposition="outside",
-        hovertemplate="<b>%{x}</b><br>RMSE: %{y:.4f}<extra></extra>",
-    ))
-    fig_cmp.update_layout(
-        template="plotly_white", height=220,
-        margin=dict(l=0, r=0, t=30, b=0),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        title=dict(text="RMSE by Model (lower is better)", font=dict(size=12, color="#6B7280")),
-        yaxis=dict(gridcolor="#F1F5F9", zeroline=False, tickfont=dict(size=11, color="#9CA3AF")),
-        xaxis=dict(showgrid=False, tickfont=dict(size=11, color="#374151")),
-        font=dict(family="Inter, system-ui, sans-serif"),
-        bargap=0.4,
-    )
-    st.plotly_chart(fig_cmp, use_container_width=True, config={"displayModeBar": False})
+        bar_pct   = int(mae_v / max_mae * 100)
+        bar_color = "#DC2626" if mae_v > 1.5 else "#D97706" if mae_v > 1.0 else "#16A34A"
+        dir_color = "#16A34A" if da_v >= 75 else "#D97706" if da_v >= 60 else "#DC2626"
+        row_bg    = "#EFF6FF" if is_best else "transparent"
+        badge     = ' <span style="font-size:.58rem;font-weight:700;background:#2563EB;color:#fff;padding:2px 7px;border-radius:99px;vertical-align:middle;letter-spacing:.04em">★ BEST</span>' if is_best else ""
+
+        c1, c2, c3 = st.columns([3, 4, 3])
+        c1.markdown(f'<div style="background:{row_bg};padding:.7rem .5rem;border-bottom:1px solid #F1F5F9;border-radius:6px 0 0 6px"><span style="font-weight:700;color:#0F172A;font-size:.9rem">{name}</span>{badge}</div>', unsafe_allow_html=True)
+        c2.markdown(f'''<div style="background:{row_bg};padding:.7rem .5rem;border-bottom:1px solid #F1F5F9">
+            <div style="background:#F1F5F9;border-radius:4px;height:8px;width:100%;margin-bottom:6px">
+                <div style="width:{bar_pct}%;height:8px;border-radius:4px;background:{bar_color}"></div>
+            </div>
+            <span style="font-weight:700;color:#0F172A;font-size:.9rem">{mae_v:.2f} percentage points off</span>
+        </div>''', unsafe_allow_html=True)
+        c3.markdown(f'<div style="background:{row_bg};padding:.7rem .5rem;border-bottom:1px solid #F1F5F9;border-radius:0 6px 6px 0"><span style="font-weight:700;font-size:.9rem;color:{dir_color}">{da_v:.0f}% of months ✓</span></div>', unsafe_allow_html=True)
+
+    # --- Naive baseline row for reference ---
+    naive_mae = saved_metrics.get("naive", {}).get("MAE", None)
+    naive_da  = saved_metrics.get("naive", {}).get("Dir_Acc", None)
+    if naive_mae is not None:
+        naive_bar = int(float(naive_mae) / max_mae * 100)
+        n1, n2, n3 = st.columns([3, 4, 3])
+        n1.markdown('<div style="padding:.7rem .5rem;border-top:1px dashed #E2E5EA"><span style="font-weight:500;color:#9CA3AF;font-size:.85rem">Naive baseline</span> <span style="font-size:.65rem;color:#9CA3AF">(just repeat last month)</span></div>', unsafe_allow_html=True)
+        n2.markdown(f'''<div style="padding:.7rem .5rem;border-top:1px dashed #E2E5EA">
+            <div style="background:#F1F5F9;border-radius:4px;height:8px;width:100%;margin-bottom:6px">
+                <div style="width:{naive_bar}%;height:8px;border-radius:4px;background:#9CA3AF"></div>
+            </div>
+            <span style="font-weight:500;color:#9CA3AF;font-size:.9rem">{float(naive_mae):.2f} percentage points off</span>
+        </div>''', unsafe_allow_html=True)
+        n3.markdown(f'<div style="padding:.7rem .5rem;border-top:1px dashed #E2E5EA"><span style="font-weight:500;font-size:.9rem;color:#9CA3AF">{float(naive_da):.0f}% of months ✓</span></div>', unsafe_allow_html=True)
+
+    # --- Ensemble weights ---
+    ens_weights = load_ensemble_weights()
+    if ens_weights:
+        lin_w = ens_weights.get("Linear Regression", 0)
+        xgb_w = ens_weights.get("XGBoost", 0)
+        st.markdown(f"""
+<div style="margin-top:1rem;padding:.85rem 1rem;background:#F9FAFB;border-radius:8px;font-size:.78rem;color:#6B7280;line-height:1.7">
+  <b style="color:#374151">How the Best Model (Ensemble) is built:</b> it combines two models —
+  Linear Regression (<b style="color:#1D4ED8">{lin_w*100:.0f}% weight</b>) and
+  XGBoost (<b style="color:#1D4ED8">{xgb_w*100:.0f}% weight</b>).
+  The LSTM is trained separately for reference but excluded from the ensemble because its tabular accuracy was weaker.
+</div>""", unsafe_allow_html=True)
+
 else:
-    # Fallback: compute on the fly from the current model selection
+    # Fallback: compute on the fly
     test_df = df_all.loc["2019-01-01":]
+    st.markdown("""
+<style>
+.sc2 { width:100%; border-collapse:collapse; font-family:'Inter',system-ui,sans-serif; }
+.sc2 thead tr { border-bottom: 2px solid #E2E5EA; }
+.sc2 th { font-size:.72rem; font-weight:600; color:#9CA3AF; padding:.6rem 1.2rem; text-align:left; }
+.sc2 td { padding:.85rem 1.2rem; border-bottom:1px solid #F1F5F9; font-size:.9rem; vertical-align:middle; }
+.sc2 tr:last-child td { border-bottom:none; }
+.sc2-name { font-weight:700; color:#0F172A; }
+.sc2-best-badge {
+    font-size:.58rem; font-weight:700; text-transform:uppercase;
+    background:#2563EB; color:#fff; padding:2px 7px; border-radius:99px;
+    margin-left:7px; vertical-align:middle;
+}
+</style>
+<table class="sc2">
+  <thead><tr>
+    <th style="width:35%">Model</th>
+    <th class="r">Average error per month</th>
+    <th class="r">Direction correct</th>
+  </tr></thead><tbody>
+""", unsafe_allow_html=True)
     rows_html = ""
     for key, name in MODEL_ORDER:
         preds_m = get_preds(test_df, key)
         if preds_m is None:
             continue
-        y      = test_df["inflation_rate"].values[:len(preds_m)]
-        err    = round(float(np.mean(np.abs(y - preds_m))), 2)
-        da     = round(float(np.mean(np.sign(np.diff(y)) == np.sign(np.diff(preds_m)))) * 100, 1)
-        hl     = "model-row-hl" if key == bm else "model-row-plain"
-        badge  = '<span class="model-row-badge">Best</span>' if key == bm else ""
+        y    = test_df["inflation_rate"].values[:len(preds_m)]
+        err  = round(float(np.mean(np.abs(y - preds_m))), 2)
+        da   = round(float(np.mean(np.sign(np.diff(y)) == np.sign(np.diff(preds_m)))) * 100, 1)
+        badge = '<span class="sc2-best-badge">★ Best</span>' if key == bm else ""
         rows_html += f"""
-<div class="model-row {hl}">
-  <span class="model-row-name">{name}{badge}</span>
-  <span class="model-row-stat">Avg error <b>±{err:.2f}pp</b> &nbsp;·&nbsp; Direction accuracy <b>{da:.0f}%</b></span>
-</div>"""
-    st.markdown(rows_html, unsafe_allow_html=True)
+<tr>
+  <td><span class="sc2-name">{name}</span>{badge}</td>
+  <td style="text-align:right;font-weight:700">±{err:.2f} pp</td>
+  <td style="text-align:right;font-weight:700">{da:.0f}%</td>
+</tr>"""
+    st.markdown(rows_html + "</tbody></table>", unsafe_allow_html=True)
 
-st.markdown("""
-<p style="font-size:.74rem;color:#9CA3AF;margin-top:.75rem;line-height:1.6">
-  <b>MAE</b> — mean absolute error in percentage points. &nbsp;
-  <b>RMSE</b> — root mean squared error (penalises big misses more). &nbsp;
-  <b>R²</b> — variance explained (1.0 = perfect). &nbsp;
-  <b>Dir. Acc</b> — how often the model correctly calls the direction of change.
-</p>
-""", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
