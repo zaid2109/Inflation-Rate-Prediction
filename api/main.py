@@ -100,20 +100,69 @@ def _run_model(model_name: str, X: pd.DataFrame) -> np.ndarray | None:
 
 
 def _build_feature_row(req: "PredictRequest") -> pd.DataFrame:
+    """
+    Build a single inference row for the "what-if" predictor.
+
+    The six fields on PredictRequest are the only ones a user actually controls.
+    Every other engineered feature (MoM/YoY changes, CPI lags/rolling stats,
+    interaction terms, real_rate, infl_mom3/6, yield_curve_proxy...) is derived
+    from the most recent real history in data/processed/features.csv, with the
+    user's overrides substituted in place of "this month's" values. Previously
+    these were hardcoded to 0.0 / stale constants, which silently zeroed out
+    some of the model's most important features (e.g. ppi_yoy, real_rate) —
+    sliders barely moved the prediction. Using real trailing history keeps the
+    engineered features consistent with how they were computed during training.
+    """
+    hist_path = PROC_DIR / "features.csv"
+    if not hist_path.exists():
+        raise HTTPException(503, "Historical data not found — run the pipeline first.")
+    hist = pd.read_csv(hist_path, index_col=0, parse_dates=True)
+
+    latest = hist.iloc[-1]                              # most recent known month (t-1)
+    prev   = hist.iloc[-2] if len(hist) >= 2 else latest # t-2, for MoM deltas
+    yr_ago = hist.iloc[-13] if len(hist) >= 13 else latest  # t-13 ~ 12mo before latest
+
+    def pct_chg(new: float, old: float) -> float:
+        return ((new - old) / old * 100) if old else 0.0
+
+    fed_funds_prev = float(prev["fed_funds"])
+    m2_prev        = float(prev["m2"])
+
     row = {
         "m2": req.m2, "unemployment": req.unemployment, "fed_funds": req.fed_funds,
         "oil_wti": req.oil_wti, "ppi": req.ppi, "gdp_growth": req.gdp_growth,
-        "gdp_growth_lag1": req.gdp_growth, "m2_mom": 0.0, "m2_yoy": 0.0,
-        "unemployment_mom": 0.0, "unemployment_yoy": 0.0, "fed_funds_mom": 0.0,
-        "fed_funds_yoy": 0.0, "oil_wti_mom": 0.0, "oil_wti_yoy": 0.0,
-        "ppi_mom": 0.0, "ppi_yoy": 0.0,
-        "cpi_lag1": 300.0, "cpi_lag3": 298.0, "cpi_lag6": 295.0, "cpi_lag12": 285.0,
-        "cpi_roll_mean3": 299.0, "cpi_roll_std3": 1.0,
-        "cpi_roll_mean12": 295.0, "cpi_roll_std12": 5.0,
-        "rate_diff": 0.0, "m2_rate_interact": 0.0, "post_covid": 1,
+        "gdp_growth_lag1": float(latest["gdp_growth"]),
+        "m2_mom": pct_chg(req.m2, m2_prev),
+        "m2_yoy": pct_chg(req.m2, float(yr_ago["m2"])),
+        "unemployment_mom": pct_chg(req.unemployment, float(prev["unemployment"])),
+        "unemployment_yoy": pct_chg(req.unemployment, float(yr_ago["unemployment"])),
+        "fed_funds_mom": pct_chg(req.fed_funds, fed_funds_prev),
+        "fed_funds_yoy": pct_chg(req.fed_funds, float(yr_ago["fed_funds"])),
+        "oil_wti_mom": pct_chg(req.oil_wti, float(prev["oil_wti"])),
+        "oil_wti_yoy": pct_chg(req.oil_wti, float(yr_ago["oil_wti"])),
+        "ppi_mom": pct_chg(req.ppi, float(prev["ppi"])),
+        "ppi_yoy": pct_chg(req.ppi, float(yr_ago["ppi"])),
+        "cpi_lag1":  float(latest["cpi"]),
+        "cpi_lag3":  float(hist["cpi"].iloc[-3])  if len(hist) >= 3  else float(latest["cpi"]),
+        "cpi_lag6":  float(hist["cpi"].iloc[-6])  if len(hist) >= 6  else float(latest["cpi"]),
+        "cpi_lag12": float(hist["cpi"].iloc[-12]) if len(hist) >= 12 else float(latest["cpi"]),
+        "cpi_roll_mean3":  float(hist["cpi"].tail(3).mean()),
+        "cpi_roll_std3":   float(hist["cpi"].tail(3).std(ddof=1)) if len(hist) >= 3 else 0.0,
+        "cpi_roll_mean12": float(hist["cpi"].tail(12).mean()),
+        "cpi_roll_std12":  float(hist["cpi"].tail(12).std(ddof=1)) if len(hist) >= 12 else 0.0,
+        "rate_diff": req.fed_funds - fed_funds_prev,
+        "m2_rate_interact": pct_chg(req.m2, m2_prev) * (req.fed_funds - fed_funds_prev),
+        "post_covid": 1,
+        "real_rate": req.fed_funds - float(latest["inflation_rate"]),
+        "yield_curve_proxy": req.fed_funds - float(
+            pd.concat([hist["fed_funds"].tail(11), pd.Series([req.fed_funds])]).mean()
+        ),
+        "infl_mom3": float(latest["inflation_rate"]) - float(hist["inflation_rate"].iloc[-4]) if len(hist) >= 4 else 0.0,
+        "infl_mom6": float(latest["inflation_rate"]) - float(hist["inflation_rate"].iloc[-7]) if len(hist) >= 7 else 0.0,
     }
-    for m in range(1, 13):
-        row[f"month_{m}"] = int(req.month == m)
+    # Note: req.month is accepted for API stability but is no longer a model
+    # feature — month-of-year dummies were dropped (see src/features.py); a
+    # 12-month YoY target already cancels out most within-year seasonality.
     df = pd.DataFrame([row])
     if _feature_cols:
         df = df.reindex(columns=_feature_cols, fill_value=0.0)

@@ -48,14 +48,12 @@ def test_rolling_features_present():
         assert f"cpi_roll_std{window}" in df.columns
 
 
-def test_seasonal_dummies():
+def test_no_seasonal_dummies():
+    """Month-of-year dummies were tried and dropped (train-only CV showed they
+    added noise, not signal, for a 12-month-differenced YoY target — see README)."""
     raw = _make_raw()
     df = build_feature_matrix(raw)
-    for m in range(1, 13):
-        assert f"month_{m}" in df.columns
-    # Exactly one month dummy is 1 per row
-    month_cols = [f"month_{m}" for m in range(1, 13)]
-    assert (df[month_cols].sum(axis=1) == 1).all()
+    assert not any(c.startswith("month_") for c in df.columns)
 
 
 def test_split_no_leakage():
@@ -74,3 +72,35 @@ def test_get_xy_target_not_in_features():
     assert "inflation_rate" not in X.columns
     assert y.name == "inflation_rate"
     assert len(X) == len(y)
+
+
+def test_no_target_leakage_in_momentum_features():
+    """infl_mom3/infl_mom6 must only use inflation_rate up to t-1, never t itself
+    (i.e. never a value that is an additive function of the target being predicted)."""
+    raw = _make_raw()
+    df = build_feature_matrix(raw)
+    # Reconstruct the pre-dropna inflation_rate series to check the exact formula.
+    full = pd.DataFrame(raw).resample("MS").last().loc["1990-01-01":"2025-12-31"]
+    full["inflation_rate"] = full["cpi"].pct_change(12, fill_method=None) * 100
+    expected_mom3 = full["inflation_rate"].shift(1).diff(3)
+    expected_mom6 = full["inflation_rate"].shift(1).diff(6)
+    pd.testing.assert_series_equal(
+        df["infl_mom3"], expected_mom3.reindex(df.index), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        df["infl_mom6"], expected_mom6.reindex(df.index), check_names=False
+    )
+    # infl_mom3(t) must equal inflation_rate(t-1) - inflation_rate(t-4), never
+    # involving inflation_rate(t) — this is the leakage that was previously present.
+    leaked_mom3 = full["inflation_rate"].diff(3).reindex(df.index)
+    assert not df["infl_mom3"].equals(leaked_mom3)
+
+
+def test_gdp_growth_raw_excluded_from_features():
+    """Raw gdp_growth is a ffilled quarterly print that isn't known for the first
+    1-2 months of its quarter — only the lagged version belongs in X."""
+    raw = _make_raw()
+    df = build_feature_matrix(raw)
+    X, y = get_xy(df)
+    assert "gdp_growth" not in X.columns
+    assert "gdp_growth_lag1" in X.columns

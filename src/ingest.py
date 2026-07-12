@@ -1,4 +1,4 @@
-"""Data ingestion from FRED API and yfinance."""
+"""Data ingestion from the FRED API."""
 
 import os
 import pandas as pd

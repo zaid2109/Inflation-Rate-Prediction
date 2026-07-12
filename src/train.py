@@ -14,6 +14,8 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 import xgboost as xgb
 
+from src.meta_models import ConvexBlendMeta
+
 warnings.filterwarnings("ignore")
 
 MODELS_DIR = Path(__file__).parent.parent / "models"
@@ -77,21 +79,32 @@ def train_arima(y_train: pd.Series) -> dict:
 # ---------------------------------------------------------------------------
 
 def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series) -> dict:
-    from sklearn.model_selection import GridSearchCV
+    from sklearn.model_selection import RandomizedSearchCV
     tscv = TimeSeriesSplit(n_splits=5)
-    param_grid = {
-        "n_estimators":     [200, 400],
-        "max_depth":        [3, 5],
-        "learning_rate":    [0.05, 0.1],
-        "subsample":        [0.8, 1.0],
-        "colsample_bytree": [0.8, 1.0],
+    # Widened from the original {n_estimators, max_depth, learning_rate, subsample,
+    # colsample_bytree} grid to include explicit regularization (reg_alpha, reg_lambda,
+    # min_child_weight) — a train-only CV comparison showed the extra regularization
+    # knobs meaningfully reduce CV RMSE (~10%) given how few rows (~330) are available
+    # relative to the feature count. RandomizedSearchCV is used because the full grid
+    # (2*3*3*2*2*3*2*3 = 1296 combos) is too large to grid-search exhaustively at
+    # 5-fold CV; 150 random draws covers the space well in reasonable time.
+    param_dist = {
+        "n_estimators":     [100, 200, 400],
+        "max_depth":        [2, 3, 4],
+        "learning_rate":    [0.03, 0.05, 0.1],
+        "subsample":        [0.7, 0.8, 1.0],
+        "colsample_bytree": [0.6, 0.8, 1.0],
+        "reg_alpha":        [0, 0.1, 1.0],
+        "reg_lambda":       [1.0, 5.0, 10.0],
+        "min_child_weight": [1, 5, 10],
     }
     base = xgb.XGBRegressor(objective="reg:squarederror", random_state=42, verbosity=0)
-    grid = GridSearchCV(base, param_grid, cv=tscv, scoring="neg_mean_squared_error",
-                        n_jobs=-1, verbose=0)
-    grid.fit(X_train, y_train)
-    model = grid.best_estimator_
-    bundle = {"model": model, "best_params": grid.best_params_}
+    search = RandomizedSearchCV(base, param_dist, n_iter=150, cv=tscv,
+                                 scoring="neg_mean_squared_error",
+                                 n_jobs=-1, verbose=0, random_state=42)
+    search.fit(X_train, y_train)
+    model = search.best_estimator_
+    bundle = {"model": model, "best_params": search.best_params_}
     joblib.dump(bundle, MODELS_DIR / "xgboost.joblib")
     return bundle
 
@@ -219,9 +232,21 @@ def walk_forward_validation(
 
 
 # ---------------------------------------------------------------------------
-# Ensemble stacking (Level-0: Linear, XGBoost, ARIMA out-of-fold;
-#                    Level-1: Ridge meta-learner)
+# Ensemble stacking (Level-0: Linear, XGBoost out-of-fold;
+#                    Level-1: constrained convex-blend meta-learner)
 # ---------------------------------------------------------------------------
+
+def _select_blend_weight(oof_a: np.ndarray, oof_b: np.ndarray, y: np.ndarray,
+                          n_grid: int = 101) -> tuple[float, float]:
+    """Grid-search w in [0, 1] minimizing RMSE of w*a + (1-w)*b against y."""
+    best_w, best_rmse = 0.5, np.inf
+    for w in np.linspace(0, 1, n_grid):
+        pred = w * oof_a + (1 - w) * oof_b
+        rmse = float(np.sqrt(np.mean((y - pred) ** 2)))
+        if rmse < best_rmse:
+            best_rmse, best_w = rmse, w
+    return best_w, best_rmse
+
 
 def train_ensemble(
     X_train: pd.DataFrame,
@@ -233,12 +258,11 @@ def train_ensemble(
     linear_metrics: dict | None = None,
 ) -> dict:
     """
-    Stacking ensemble (Level-0: Ridge + XGBoost; Level-1: Ridge meta-learner).
+    Stacking ensemble (Level-0: Ridge + XGBoost; Level-1: constrained convex blend).
     LSTM is excluded from the ensemble — it uses a different input shape and
     historically underperforms the tabular models on this dataset.
-    Meta-model coefficients are saved as ensemble weights for transparency.
+    Meta-model weights are saved as ensemble weights for transparency.
     """
-    from sklearn.metrics import mean_squared_error as mse_fn
     tscv = TimeSeriesSplit(n_splits=5)
 
     scaler_lin = linear_bundle["scaler"]
@@ -255,29 +279,23 @@ def train_ensemble(
         oof_linear[val_idx] = ridge_fold.predict(X_scaled[val_idx])
 
         xgb_fold = xgb.XGBRegressor(
-            objective="reg:squarederror", random_state=42, verbosity=0,
-            n_estimators=bp.get("n_estimators", 200),
-            max_depth=bp.get("max_depth", 3),
-            learning_rate=bp.get("learning_rate", 0.1),
-            subsample=bp.get("subsample", 0.8),
-            colsample_bytree=bp.get("colsample_bytree", 0.8),
+            objective="reg:squarederror", random_state=42, verbosity=0, **bp,
         )
         xgb_fold.fit(X_train.iloc[tr_idx], y_train.iloc[tr_idx])
         oof_xgb[val_idx] = xgb_fold.predict(X_train.iloc[val_idx])
 
-    meta_X     = np.column_stack([oof_linear, oof_xgb])
-    meta_model = Ridge(alpha=1.0)
-    meta_model.fit(meta_X, y_train)
+    # Meta-learner: constrained convex blend, not unconstrained Ridge. See
+    # ConvexBlendMeta docstring — with r~0.8 correlated OOF predictions,
+    # unconstrained regression produces unstable, sign-flipped coefficients
+    # that don't generalize; a plain non-negative, sum-to-1 blend does.
+    best_w, blend_rmse = _select_blend_weight(oof_linear, oof_xgb, y_train.values)
+    meta_model = ConvexBlendMeta(best_w)
 
-    # Normalise meta-model coefficients to sum to 1 for interpretable weights
-    raw_coefs  = meta_model.coef_
-    pos_coefs  = np.maximum(raw_coefs, 0)
-    total      = pos_coefs.sum() if pos_coefs.sum() > 0 else 1.0
-    weights    = {
-        "Linear Regression": round(float(pos_coefs[0] / total), 4),
-        "XGBoost":           round(float(pos_coefs[1] / total), 4),
-        "LSTM Neural Net":   0.0,   # excluded from ensemble
-        "raw_intercept":     round(float(meta_model.intercept_), 4),
+    weights = {
+        "Linear Regression": round(best_w, 4),
+        "XGBoost":            round(1 - best_w, 4),
+        "LSTM Neural Net":    0.0,   # excluded from ensemble
+        "oof_blend_rmse":     round(blend_rmse, 4),
     }
     (MODELS_DIR / "ensemble_weights.json").write_text(json.dumps(weights, indent=2))
     print(f"  Ensemble weights: {weights}")

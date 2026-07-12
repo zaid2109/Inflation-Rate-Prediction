@@ -1,9 +1,18 @@
-"""Ensemble stacking — Level-0: Ridge + XGBoost; Level-1: Ridge meta-model.
+"""Standalone/experimental ensemble stacking — Level-0: Ridge + XGBoost; Level-1: Ridge meta-model.
+
+NOT part of the main pipeline. src/train.py::train_ensemble() is the canonical
+implementation whose output (models/ensemble.joblib) is what api/main.py,
+dashboard/app.py, and src/spf_comparison.py actually load. This file uses a
+different bundle schema ({"ridge_pipe", "xgb_model", "meta_scaler", ...} instead
+of {"linear_bundle", "xgb_bundle", ...}), so running it used to silently
+overwrite models/ensemble.joblib with a bundle the rest of the app can't read
+(KeyError at inference time). It now writes to a separate file so it can be
+run for experimentation without breaking the API/dashboard.
 
 Out-of-fold (OOF) predictions from the base models are used to train the
 meta-model, so no test-set information leaks into the stacker.
 
-Saves models/ensemble.joblib with the fitted meta-model and base bundles.
+Saves models/ensemble_standalone.joblib with the fitted meta-model and base bundles.
 """
 
 import warnings
@@ -111,11 +120,11 @@ def train_ensemble(
         "xgb_model":    xgb_full,
         "metrics":      metrics,
     }
-    joblib.dump(bundle, MODELS_DIR / "ensemble.joblib")
-    print(f"Ensemble saved → {MODELS_DIR / 'ensemble.joblib'}")
+    joblib.dump(bundle, MODELS_DIR / "ensemble_standalone.joblib")
+    print(f"Ensemble saved → {MODELS_DIR / 'ensemble_standalone.joblib'}")
 
-    # Save metrics for API
-    with open(MODELS_DIR / "ensemble_metrics.json", "w") as f:
+    # Save metrics (separate file — NOT read by the API; see module docstring)
+    with open(MODELS_DIR / "ensemble_standalone_metrics.json", "w") as f:
         json.dump(metrics, f)
 
     return {
@@ -126,8 +135,8 @@ def train_ensemble(
 
 
 def predict_ensemble(X: pd.DataFrame) -> np.ndarray:
-    """Run inference with the saved ensemble bundle."""
-    bundle = joblib.load(MODELS_DIR / "ensemble.joblib")
+    """Run inference with the saved standalone ensemble bundle (see module docstring)."""
+    bundle = joblib.load(MODELS_DIR / "ensemble_standalone.joblib")
     r = bundle["ridge_pipe"].predict(X)
     x = bundle["xgb_model"].predict(X)
     meta = bundle["meta_scaler"].transform(np.column_stack([r, x]))

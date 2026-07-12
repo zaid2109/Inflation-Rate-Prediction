@@ -1,4 +1,10 @@
-"""Walk-forward expanding-window validation.
+"""Standalone/experimental walk-forward expanding-window validation (Ridge + XGBoost).
+
+NOT part of the main pipeline and not read by the API. src/train.py::walk_forward_validation()
+is the canonical implementation (models/walk_forward.json, served by GET /walk-forward).
+This script uses sklearn's TimeSeriesSplit(n_splits=10) instead of a true month-by-month
+expanding window, and writes to a differently-named output file so it can be run for
+extra experimentation without clashing with the canonical walk-forward results.
 
 Trains on all data up to month t, predicts t+1, advances one month.
 Uses TimeSeriesSplit(n_splits=10) to produce out-of-sample predictions

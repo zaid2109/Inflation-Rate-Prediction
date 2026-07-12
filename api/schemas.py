@@ -12,7 +12,7 @@ class PredictRequest(BaseModel):
     ppi: float         = Field(..., description="Producer Price Index")
     gdp_growth: float  = Field(..., description="Real GDP growth rate (%)")
     month: int         = Field(..., ge=1, le=12, description="Month of forecast (1–12)")
-    model: Literal["linear", "xgboost", "lstm", "best"] = Field(
+    model: Literal["linear", "xgboost", "lstm", "ensemble", "arima", "best"] = Field(
         "best", description="Which model to use for prediction"
     )
 

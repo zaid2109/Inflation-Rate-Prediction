@@ -34,11 +34,20 @@ def predict_xgboost(features: pd.DataFrame) -> np.ndarray:
     return bundle["model"].predict(features)
 
 
-def predict_lstm(features: pd.DataFrame, lookback: int = 24) -> np.ndarray:
+def predict_lstm(features: pd.DataFrame, lookback: int | None = None) -> np.ndarray:
     import tensorflow as tf
     bundle = _load("lstm")
+    if lookback is None:
+        lookback = bundle["lookback"]  # must match the window the model was trained on
     scaler = bundle["scaler"]
-    model  = bundle["model"]
+    # The Keras model is saved separately (models/lstm_model.keras) — it isn't
+    # joblib-picklable, so it's never part of the lstm.joblib bundle.
+    if "keras_model" not in bundle:
+        keras_path = MODELS_DIR / "lstm_model.keras"
+        if not keras_path.exists():
+            raise FileNotFoundError(f"{keras_path} not found. Train the LSTM first.")
+        bundle["keras_model"] = tf.keras.models.load_model(str(keras_path))
+    model = bundle["keras_model"]
     X_scaled = scaler.transform(features)
     sequences = np.array([X_scaled[i - lookback:i] for i in range(lookback, len(X_scaled) + 1)])
     if len(sequences) == 0:
