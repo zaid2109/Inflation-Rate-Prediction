@@ -382,7 +382,7 @@ function friendlyDriverName(label){
 /* ═══ Hero & Insights ════════════════════════════════════════════════════ */
 async function loadHero(){
   try{
-    const s = await (await fetch(`${BASE}/summary?model=xgboost`)).json();
+    const s = await (await fetch(`${BASE}/summary?model=ensemble`)).json();
     const v = s.latest_actual;
     const st = rateStatus(v);
 
@@ -443,7 +443,7 @@ async function loadDriver(){
 async function loadChart(years=25){
   const yearFrom = 2025 - years;
   try{
-    const d = await (await fetch(`${BASE}/chart-data?model=xgboost&year_from=${yearFrom}&year_to=2025`)).json();
+    const d = await (await fetch(`${BASE}/chart-data?model=ensemble&year_from=${yearFrom}&year_to=2025`)).json();
     buildChart(d);
   } catch(e){ console.warn('chart error', e); }
 }
@@ -545,13 +545,20 @@ const debounce = (fn,ms) => (...args) => {
 
 const runForecast = debounce(async () => {
   const body = {
-    m2: 2150,
+    // m2/ppi/gdp_growth aren't user-controlled sliders here, so they're held at
+    // the latest known real values (data/processed/features.csv, 2025-09) rather
+    // than "assume conditions changed" placeholders. m2 previously defaulted to
+    // 2150 — off by ~10x from the real M2SL scale (~22,000, in billions USD) —
+    // which used to be harmless because the API ignored m2 for MoM/YoY feature
+    // construction, but now that it's wired through correctly, that stale value
+    // was implying a ~90% money-supply collapse and producing nonsensical
+    // (double-digit negative) forecasts.
+    m2: 22170, ppi: 262, gdp_growth: 4.4,
     unemployment: parseFloat(document.getElementById('sl-unemp').value),
     fed_funds:    parseFloat(document.getElementById('sl-ff').value),
     oil_wti:      parseFloat(document.getElementById('sl-oil').value),
-    ppi: 230, gdp_growth: 2.1,
     month: new Date().getMonth()+1,
-    model: 'xgboost',
+    model: 'ensemble',
   };
   try{
     const r = await fetch(`${BASE}/predict`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
